@@ -25,3 +25,4 @@ TX360 AI 에이전트 도입을 위한 조사·검토 기록을 모아 두는 �
 ## 문서 목록
 
 - [2026-09-11 TX360 AI 에이전트 — 채널 후보 비교](research/2026-09-11-tx360-agent-channel-comparison.md)
+- [2026-09-11 `.mcpb` 사내 설치 테스트 — 절차와 기록지](research/2026-09-11-mcpb-install-test.md)

@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>MCPB 진단 패널</title>
+<style>
+  :root {
+    --bg: var(--color-background-primary, #fff);
+    --fg: var(--color-text-primary, #171717);
+    --muted: var(--color-text-secondary, #6b7280);
+    --line: var(--color-border-primary, #e5e7eb);
+    --accent: var(--color-accent-primary, #2563eb);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 16px;
+    background: var(--bg); color: var(--fg);
+    font: 14px/1.55 var(--font-sans, system-ui, -apple-system, "Segoe UI", "Noto Sans KR", sans-serif);
+  }
+  h1 { font-size: 15px; margin: 0 0 4px; }
+  p.sub { margin: 0 0 14px; color: var(--muted); font-size: 12px; }
+  section { border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-bottom: 10px; }
+  h2 { font-size: 13px; margin: 0 0 8px; display: flex; align-items: center; gap: 6px; }
+  .row { display: flex; justify-content: space-between; gap: 12px; padding: 3px 0; font-size: 12px; }
+  .row span:first-child { color: var(--muted); flex: 0 0 auto; }
+  .row span:last-child { text-align: right; word-break: break-all; font-variant-numeric: tabular-nums; }
+  .btns { display: flex; flex-wrap: wrap; gap: 6px; }
+  button {
+    font: inherit; font-size: 12px; padding: 6px 10px; cursor: pointer;
+    border: 1px solid var(--line); border-radius: 6px;
+    background: transparent; color: var(--fg);
+  }
+  button:hover { border-color: var(--accent); color: var(--accent); }
+  button:disabled { opacity: .5; cursor: default; }
+  .log {
+    margin-top: 10px; padding: 8px; border-radius: 6px;
+    background: var(--color-background-secondary, rgba(127,127,127,.08));
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px;
+    white-space: pre-wrap; word-break: break-all; max-height: 240px; overflow: auto;
+  }
+  .ok { color: #16a34a; } .bad { color: #dc2626; } .warn { color: #d97706; }
+</style>
+</head>
+<body>
+  <h1>MCPB 설치 진단 패널</h1>
+  <p class="sub">이 패널이 보인다는 것 자체가 <strong>Claude Desktop에서 MCP Apps(<code>ui://</code>)가 렌더링된다</strong>는 증거입니다.</p>
+
+  <section>
+    <h2>1. 호스트 핸드셰이크</h2>
+    <div id="hs"><div class="row"><span>상태</span><span class="warn">ui/initialize 시도 중…</span></div></div>
+  </section>
+
+  <section>
+    <h2>2. 기능 확인</h2>
+    <div class="btns">
+      <button id="b-report">probe_report 호출</button>
+      <button id="b-net">probe_network 호출</button>
+      <button id="b-apponly">app-only 도구 호출</button>
+      <button id="b-read">resources/read</button>
+      <button id="b-fs">전체화면 요청</button>
+      <button id="b-inline">인라인 복귀</button>
+      <button id="b-link">외부 링크 열기</button>
+      <button id="b-ctx">모델 컨텍스트 주입</button>
+      <button id="b-fetch">사내망 직접 fetch</button>
+      <button id="b-clear">지우기</button>
+    </div>
+    <div class="log" id="log">준비됨.</div>
+  </section>
+
+<script>
+(function () {
+  var CFG = window.__PROBE_CFG__ || { origin: "", host: "" };
+  var logEl = document.getElementById('log');
+  var pending = {};
+  var nextId = 1;
+
+  function put(msg, cls) {
+    var t = new Date().toLocaleTimeString();
+    logEl.innerHTML += '\n<span class="' + (cls || '') + '">[' + t + '] ' + String(msg).replace(/[<&]/g, function (c) { return c === '<' ? '&lt;' : '&amp;'; }) + '</span>';
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+  function short(o) { try { return JSON.stringify(o).slice(0, 600); } catch (e) { return String(o); } }
+
+  window.addEventListener('message', function (ev) {
+    var d = ev.data;
+    if (!d || d.jsonrpc !== '2.0') return;
+    if (d.id != null && pending[d.id]) {
+      var p = pending[d.id]; delete pending[d.id];
+      if (d.error) p.reject(new Error(short(d.error))); else p.resolve(d.result);
+    }
+  });
+
+  function request(method, params, timeoutMs) {
+    var id = nextId++;
+    window.parent.postMessage({ jsonrpc: '2.0', id: id, method: method, params: params || {} }, '*');
+    return new Promise(function (resolve, reject) {
+      pending[id] = { resolve: resolve, reject: reject };
+      setTimeout(function () {
+        if (pending[id]) { delete pending[id]; reject(new Error('timeout: ' + method)); }
+      }, timeoutMs || 15000);
+    });
+  }
+  function notify(method, params) {
+    window.parent.postMessage({ jsonrpc: '2.0', method: method, params: params || {} }, '*');
+  }
+
+  var appCapabilities = {
+    experimental: {},
+    availableDisplayModes: ['inline', 'fullscreen', 'pip'],
+    displayMode: 'inline'
+  };
+
+  function renderHandshake(res, methodUsed) {
+    var hc = (res && res.hostCapabilities) || {};
+    var ctx = (res && res.hostContext) || {};
+    var hi = (res && res.hostInfo) || {};
+    var rows = [
+      ['핸드셰이크 메서드', methodUsed],
+      ['프로토콜', res && res.protocolVersion || '—'],
+      ['호스트', (hi.name || '—') + ' ' + (hi.version || '')],
+      ['테마', ctx.theme || '—'],
+      ['표시 모드', ctx.displayMode || '—'],
+      ['컨테이너', ctx.containerDimensions ? short(ctx.containerDimensions) : '—'],
+      ['openLinks 지원', hc.openLinks ? '✅' : '❌'],
+      ['serverTools 지원', hc.serverTools ? '✅' : '❌'],
+      ['serverResources 지원', hc.serverResources ? '✅' : '❌'],
+      ['테마 변수 수신', ctx.styles && ctx.styles.variables ? '✅ ' + Object.keys(ctx.styles.variables).length + '개' : '❌']
+    ];
+    document.getElementById('hs').innerHTML = rows.map(function (r) {
+      return '<div class="row"><span>' + r[0] + '</span><span>' + r[1] + '</span></div>';
+    }).join('');
+
+    if (ctx.styles && ctx.styles.variables) {
+      var v = ctx.styles.variables;
+      Object.keys(v).forEach(function (k) { document.documentElement.style.setProperty(k, v[k]); });
+    }
+    if (ctx.containerDimensions && ctx.containerDimensions.maxHeight) {
+      document.documentElement.style.maxHeight = ctx.containerDimensions.maxHeight + 'px';
+    }
+  }
+
+  // 스펙 본문은 ui/initialize를, 예제는 initialize를 쓴다. 둘 다 시도한다.
+  request('ui/initialize', { protocolVersion: '2026-01-26', appCapabilities: appCapabilities, clientInfo: { name: 'mcpb-install-probe-view', version: '0.1.0' } }, 8000)
+    .then(function (res) { renderHandshake(res, 'ui/initialize'); notify('ui/notifications/initialized', {}); put('✅ ui/initialize 성공', 'ok'); })
+    .catch(function (e1) {
+      put('ui/initialize 실패: ' + e1.message + ' → initialize로 재시도', 'warn');
+      return request('initialize', { protocolVersion: '2026-01-26', capabilities: {}, appCapabilities: appCapabilities, clientInfo: { name: 'mcpb-install-probe-view', version: '0.1.0' } }, 8000)
+        .then(function (res) { renderHandshake(res, 'initialize'); notify('notifications/initialized', {}); put('✅ initialize 성공', 'ok'); })
+        .catch(function (e2) {
+          document.getElementById('hs').innerHTML = '<div class="row"><span>상태</span><span class="bad">두 방식 모두 실패</span></div>';
+          put('❌ 핸드셰이크 실패: ' + e2.message + ' — 패널은 그려졌지만 host API는 못 씁니다', 'bad');
+        });
+    });
+
+  function callTool(name, args) {
+    put('→ tools/call ' + name);
+    return request('tools/call', { name: name, arguments: args || {} }, 30000)
+      .then(function (r) {
+        var txt = (r && r.content && r.content[0] && r.content[0].text) || short(r);
+        put('✅ ' + name + ' 응답 (' + txt.length + '자)\n' + txt.slice(0, 800), 'ok');
+      })
+      .catch(function (e) { put('❌ ' + name + ' 실패: ' + e.message, 'bad'); });
+  }
+
+  var on = function (id, fn) { document.getElementById(id).addEventListener('click', fn); };
+
+  on('b-report', function () { callTool('probe_report'); });
+  on('b-net', function () { callTool('probe_network'); });
+  on('b-apponly', function () { callTool('probe_app_only'); });
+
+  on('b-read', function () {
+    put('→ resources/read');
+    request('resources/read', { uri: 'ui://mcpb-install-probe/panel' }, 15000)
+      .then(function (r) { put('✅ resources/read 성공 — ' + short(r).slice(0, 200), 'ok'); })
+      .catch(function (e) { put('❌ resources/read 실패: ' + e.message, 'bad'); });
+  });
+
+  on('b-fs', function () {
+    request('ui/request-display-mode', { mode: 'fullscreen' }, 10000)
+      .then(function (r) { put('✅ 표시 모드 → ' + short(r), 'ok'); })
+      .catch(function (e) { put('❌ 전체화면 요청 실패: ' + e.message, 'bad'); });
+  });
+  on('b-inline', function () {
+    request('ui/request-display-mode', { mode: 'inline' }, 10000)
+      .then(function (r) { put('✅ 표시 모드 → ' + short(r), 'ok'); })
+      .catch(function (e) { put('❌ 인라인 복귀 실패: ' + e.message, 'bad'); });
+  });
+
+  on('b-link', function () {
+    var url = CFG.origin || 'https://github.com/modelcontextprotocol/ext-apps';
+    request('ui/open-link', { url: url }, 10000)
+      .then(function () { put('✅ ui/open-link 요청됨 → ' + url + ' (브라우저가 떴는지 눈으로 확인)', 'ok'); })
+      .catch(function (e) { put('❌ ui/open-link 실패: ' + e.message, 'bad'); });
+  });
+
+  on('b-ctx', function () {
+    var stamp = new Date().toISOString();
+    request('ui/update-model-context', { content: [{ type: 'text', text: 'MCPB 진단 패널에서 주입한 문장입니다 (' + stamp + '). 모델이 이 문장을 읽을 수 있으면 ui/update-model-context가 동작합니다.' }] }, 10000)
+      .then(function () { put('✅ 컨텍스트 주입 요청됨 — 이제 모델에게 "방금 패널이 무엇을 주입했나?"라고 물어보세요', 'ok'); })
+      .catch(function (e) { put('❌ ui/update-model-context 실패: ' + e.message, 'bad'); });
+  });
+
+  on('b-fetch', function () {
+    if (!CFG.origin) { put('설치 설정에 대상 호스트가 없어 건너뜁니다. 확장 설정에서 호스트를 넣고 재시작하세요.', 'warn'); return; }
+    put('→ fetch ' + CFG.origin + ' (CSP connectDomains 확인)');
+    var t0 = Date.now();
+    fetch(CFG.origin, { method: 'GET', mode: 'cors' })
+      .then(function (r) { put('✅ fetch 성공 — HTTP ' + r.status + ' (' + (Date.now() - t0) + 'ms). iframe이 사내망에 직접 닿습니다.', 'ok'); })
+      .catch(function (e) {
+        put('❌ fetch 실패 (' + (Date.now() - t0) + 'ms): ' + e.message, 'bad');
+        put('CSP 차단인지 CORS 거부인지 네트워크 도달 실패인지는 개발자 도구 콘솔에서 구분됩니다.', 'warn');
+      });
+  });
+
+  on('b-clear', function () { logEl.textContent = '지웠습니다.'; });
+})();
+</script>
+</body>
+</html>

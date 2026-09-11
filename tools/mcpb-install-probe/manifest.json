@@ -1,0 +1,60 @@
+{
+  "manifest_version": "0.3",
+  "name": "mcpb-install-probe",
+  "display_name": "MCPB 설치 진단 프로브",
+  "version": "0.1.0",
+  "description": "사내 PC에서 .mcpb 설치 가능 여부, 사내망 도달성, MCP Apps UI 렌더링을 한 번에 확인하는 진단용 확장",
+  "long_description": "외부 의존성이 전혀 없는 진단 전용 MCP 서버입니다. 어떤 데이터도 외부로 보내지 않으며, 대상 호스트는 설치 시 사용자가 직접 입력합니다.\n\n확인 항목:\n1. .mcpb 번들이 조직 정책상 설치되는가\n2. Claude Desktop 동봉 Node 런타임으로 stdio 서버가 기동되는가\n3. user_config 입력 폼과 sensitive 보안 저장이 동작하는가\n4. 서버 프로세스에서 사내망 호스트에 DNS/TCP/TLS로 닿는가\n5. MCP Apps(ui:// 리소스)가 대화 안에서 렌더링되는가\n6. UI가 tools/call, ui/open-link, ui/request-display-mode를 쓸 수 있는가\n7. iframe에서 사내망 오리진으로 직접 fetch가 되는가 (CSP connectDomains)",
+  "author": { "name": "claude-research" },
+  "server": {
+    "type": "node",
+    "entry_point": "server/index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/server/index.js"],
+      "env": {
+        "PROBE_DIR": "${__dirname}",
+        "PROBE_TARGET_HOST": "${user_config.target_host}",
+        "PROBE_TARGET_PORT": "${user_config.target_port}",
+        "PROBE_TARGET_PATH": "${user_config.target_path}",
+        "PROBE_SECRET": "${user_config.secret_probe}"
+      }
+    }
+  },
+  "user_config": {
+    "target_host": {
+      "type": "string",
+      "title": "테스트 대상 호스트",
+      "description": "사내망 도달성을 확인할 호스트명. 예: 사내 TX360 호스트. 비워 두면 네트워크 검사를 건너뜁니다.",
+      "required": false,
+      "default": ""
+    },
+    "target_port": {
+      "type": "number",
+      "title": "포트",
+      "description": "TCP 연결을 시도할 포트",
+      "required": false,
+      "default": 443
+    },
+    "target_path": {
+      "type": "string",
+      "title": "HTTPS 확인 경로",
+      "description": "HTTPS 응답 코드를 확인할 경로. 예: /health",
+      "required": false,
+      "default": "/"
+    },
+    "secret_probe": {
+      "type": "string",
+      "title": "보안 저장 테스트 값",
+      "description": "아무 값이나 넣어 보세요. 입력이 마스킹되는지, 서버에 전달되는지만 확인하며 값 자체는 절대 출력하지 않습니다.",
+      "sensitive": true,
+      "required": false,
+      "default": ""
+    }
+  },
+  "compatibility": {
+    "platforms": ["darwin", "win32", "linux"],
+    "runtimes": { "node": ">=18.0.0" }
+  },
+  "keywords": ["diagnostic", "probe", "install-test"]
+}
